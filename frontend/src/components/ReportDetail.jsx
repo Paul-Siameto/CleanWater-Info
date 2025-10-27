@@ -4,6 +4,7 @@ import api from '../lib/api'
 export default function ReportDetail({ report, auth }) {
   const [comments, setComments] = useState([])
   const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
   const reportId = report?._id || report?.id
 
   useEffect(() => {
@@ -30,6 +31,30 @@ export default function ReportDetail({ report, auth }) {
     await loadComments()
   }
 
+  async function analyzeAI() {
+    if (!reportId || busy) return
+    setBusy(true)
+    try {
+      const token = await auth?.currentUser?.getIdToken?.()
+      await api.post(`/reports/${reportId}/ai/analyze`, {}, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined)
+      alert('AI analysis updated for this report.')
+    } catch (e) {
+      alert('AI analyze failed')
+    } finally { setBusy(false) }
+  }
+
+  async function updateStatus(next) {
+    if (!reportId || busy) return
+    setBusy(true)
+    try {
+      const token = await auth?.currentUser?.getIdToken?.()
+      await api.patch(`/reports/${reportId}/status`, { status: next }, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined)
+      alert(`Status set to ${next}`)
+    } catch (e) {
+      alert('Status update failed')
+    } finally { setBusy(false) }
+  }
+
   if (!report) return (
     <div className="p-4 text-sm text-gray-500">Select a report to view details.</div>
   )
@@ -41,6 +66,24 @@ export default function ReportDetail({ report, auth }) {
         <div className="text-sm text-gray-600">Status: {report.status}</div>
         <div className="text-sm text-gray-600">Notes: {report.notes || '—'}</div>
         <div className="text-xs text-gray-500">ID: {reportId}</div>
+        {Array.isArray(report.photos) && report.photos.length > 0 ? (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {report.photos.map((pid) => (
+              <div key={pid} className="text-xs border rounded px-2 py-1">{pid}</div>
+            ))}
+          </div>
+        ) : null}
+        {report.weatherSnapshot ? (
+          <div className="mt-2 text-xs text-gray-600">
+            Weather: {report.weatherSnapshot.main} {report.weatherSnapshot.temp != null ? `• ${report.weatherSnapshot.temp}°C` : ''}
+          </div>
+        ) : null}
+        <div className="mt-3 flex gap-2">
+          <button className="px-2 py-1 border rounded text-xs" onClick={analyzeAI} disabled={busy}>AI Analyze</button>
+          <button className="px-2 py-1 border rounded text-xs" onClick={() => updateStatus('verified')} disabled={busy}>Verify</button>
+          <button className="px-2 py-1 border rounded text-xs" onClick={() => updateStatus('flagged')} disabled={busy}>Flag</button>
+          <button className="px-2 py-1 border rounded text-xs" onClick={() => updateStatus('rejected')} disabled={busy}>Reject</button>
+        </div>
       </div>
 
       <div className="p-4 flex-1 overflow-auto">

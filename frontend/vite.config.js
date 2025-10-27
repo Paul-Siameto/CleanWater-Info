@@ -10,10 +10,15 @@ export default defineConfig({
         target: 'http://localhost:4000',
         changeOrigin: true,
       },
+      '/tiles': {
+        target: 'https://tile.openstreetmap.org',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/tiles/, ''),
+      },
     },
-    headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-    },
+    // headers: {
+    //   'Cross-Origin-Opener-Policy': 'same-origin',
+    //   'Cross-Origin-Embedder-Policy': 'require-corp',
+    // },
   },
 });
