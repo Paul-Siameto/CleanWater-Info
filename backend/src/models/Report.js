@@ -14,6 +14,7 @@ const reportSchema = new mongoose.Schema({
   contaminationType: { type: String, default: null },
   aiScore: { type: Number, default: null },
   aiLabel: { type: String, default: null },
+  aiTop: { type: [Object], default: [] },
   weatherSnapshot: { type: Object, default: null },
   duplicates: { type: [mongoose.Schema.Types.ObjectId], ref: 'Report', default: [] },
 }, { timestamps: true });

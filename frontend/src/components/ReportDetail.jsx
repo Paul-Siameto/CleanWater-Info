@@ -68,9 +68,19 @@ export default function ReportDetail({ report, auth }) {
         <div className="text-xs text-gray-500">ID: {reportId}</div>
         {Array.isArray(report.photos) && report.photos.length > 0 ? (
           <div className="mt-2 flex flex-wrap gap-2">
-            {report.photos.map((pid) => (
-              <div key={pid} className="text-xs border rounded px-2 py-1">{pid}</div>
-            ))}
+            {report.photos.map((pid) => {
+              const cloud = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
+              const url = cloud ? `https://res.cloudinary.com/${cloud}/image/upload/c_fill,w_120,h_120/${pid}.jpg` : null
+              return (
+                <div key={pid} className="text-xs">
+                  {url ? (
+                    <img src={url} alt={pid} className="w-16 h-16 object-cover rounded border" />
+                  ) : (
+                    <div className="border rounded px-2 py-1">{pid}</div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         ) : null}
         {report.weatherSnapshot ? (

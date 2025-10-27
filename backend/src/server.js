@@ -317,22 +317,42 @@ app.post('/api/reports/:id/ai/analyze', authRequired, async (req, res) => {
             timeout: 30000,
           }
         );
-        // Response is array of {label, score}
-        const preds = Array.isArray(hfRes.data) ? hfRes.data : [];
+        // Response is array of {label, score}. Map to domain labels and keep top-3
+        const raw = Array.isArray(hfRes.data) ? hfRes.data : [];
+        const mapLabel = (lbl) => {
+          const s = String(lbl || '').toLowerCase();
+          if (s.includes('sewage') || s.includes('waste')) return 'sewage';
+          if (s.includes('alga') || s.includes('bloom')) return 'algae_bloom';
+          if (s.includes('oil') || s.includes('gas')) return 'oil_spill';
+          if (s.includes('plastic') || s.includes('bottle') || s.includes('bag')) return 'plastic_waste';
+          return s.replace(/\s+/g, '_').slice(0, 40) || 'unknown';
+        };
+        const preds = raw
+          .map(p => ({ label: mapLabel(p.label), score: typeof p.score === 'number' ? p.score : 0 }))
+          .filter(p => p.score >= 0.2)
+          .sort((a,b) => b.score - a.score)
+          .slice(0,3)
+          .map(p => ({ label: p.label, score: Number(p.score.toFixed(2)) }));
         const top = preds[0] || {};
+        doc.aiTop = preds;
         doc.aiLabel = top.label || 'unknown';
-        doc.aiScore = typeof top.score === 'number' ? Number(top.score.toFixed(2)) : null;
+        doc.aiScore = typeof top.score === 'number' ? top.score : null;
         await doc.save();
-        return res.json({ aiLabel: doc.aiLabel, aiScore: doc.aiScore, provider: 'huggingface' });
+        return res.json({ aiLabel: doc.aiLabel, aiScore: doc.aiScore, aiTop: preds, provider: 'huggingface' });
       } catch (e) {
         // fall through to stub
       }
     }
     // Stub fallback
-    doc.aiLabel = 'possible_contamination';
-    doc.aiScore = 0.72;
+    doc.aiTop = [
+      { label: 'possible_contamination', score: 0.72 },
+      { label: 'plastic_waste', score: 0.34 },
+      { label: 'algae_bloom', score: 0.22 },
+    ];
+    doc.aiLabel = doc.aiTop[0].label;
+    doc.aiScore = doc.aiTop[0].score;
     await doc.save();
-    res.json({ aiLabel: doc.aiLabel, aiScore: doc.aiScore, provider: 'stub' });
+    res.json({ aiLabel: doc.aiLabel, aiScore: doc.aiScore, aiTop: doc.aiTop, provider: 'stub' });
   } catch (e) {
     res.status(500).json({ error: 'ai_analyze_failed' });
   }

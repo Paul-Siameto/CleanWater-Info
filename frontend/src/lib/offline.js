@@ -29,3 +29,16 @@ export async function clearQueue() {
   await tx.store.clear()
   await tx.done
 }
+
+export async function flushQueuedReports(api, auth) {
+  const token = await auth?.currentUser?.getIdToken?.()
+  const headers = token ? { Authorization: `Bearer ${token}` } : undefined
+  const d = await db()
+  const items = await d.getAll(STORE)
+  for (const item of items) {
+    try {
+      await api.post('/reports', item.payload, headers ? { headers } : undefined)
+      await d.delete(STORE, item.id)
+    } catch {}
+  }
+}

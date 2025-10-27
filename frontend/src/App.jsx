@@ -8,7 +8,8 @@ import { getFirebaseConfig } from './lib/firebase'
 import ReportList from './components/ReportList'
 import ReportDetail from './components/ReportDetail'
 import { getUploadSignature, uploadImageToCloudinary } from './lib/cloudinary'
-import { queueReport } from './lib/offline'
+import { queueReport, flushQueuedReports } from './lib/offline'
+import AdminRoles from './components/AdminRoles'
 
 const firebaseApp = initializeApp(getFirebaseConfig())
 const auth = getAuth(firebaseApp)
@@ -21,11 +22,14 @@ export default function App() {
   const [selected, setSelected] = useState(null)
   const [notes, setNotes] = useState('')
   const [file, setFile] = useState(null)
+  const [previews, setPreviews] = useState([])
   const [statusFilter, setStatusFilter] = useState('')
   const [page, setPage] = useState(1)
   const [pages, setPages] = useState(1)
   const [useBbox, setUseBbox] = useState(false)
   const [bbox, setBbox] = useState(null) // [minLng,minLat,maxLng,maxLat]
+  const [zoomLevel, setZoomLevel] = useState(13)
+  const [useCluster, setUseCluster] = useState(true)
 
   useEffect(() => {
     onAuthStateChanged(auth, (u) => setUser(u))
@@ -33,6 +37,23 @@ export default function App() {
       navigator.geolocation.getCurrentPosition((p) => setPosition({ lat: p.coords.latitude, lng: p.coords.longitude }))
     }
     fetchReports(1, statusFilter)
+    // SW background sync handler
+    navigator.serviceWorker?.addEventListener?.('message', async (event) => {
+      if (event?.data?.type === 'flush-reports') {
+        try { await flushQueuedReports(api, auth) } catch {}
+      }
+    })
+    // Online trigger
+    window.addEventListener('online', async () => {
+      try {
+        const reg = await navigator.serviceWorker?.getRegistration?.()
+        if (reg?.sync) {
+          try { await reg.sync.register('flush-reports') } catch { await flushQueuedReports(api, auth) }
+        } else {
+          await flushQueuedReports(api, auth)
+        }
+      } catch {}
+    })
   }, [])
 
   async function fetchReports(nextPage = page, status = statusFilter, nextBbox = bbox) {
@@ -112,8 +133,38 @@ export default function App() {
         setBbox(next)
         fetchReports(1, statusFilter, next)
       },
+      zoomend: (e) => {
+        setZoomLevel(e.target.getZoom())
+      }
     })
     return null
+  }
+
+  function getClusteredMarkers() {
+    if (!useCluster) return reports.map((r) => ({ type: 'single', report: r }))
+    // Grid size tuned by zoom
+    const z = zoomLevel || 13
+    const grid = z >= 14 ? 0.005 : z >= 12 ? 0.01 : z >= 10 ? 0.02 : 0.05
+    const buckets = new Map()
+    for (const r of reports) {
+      const lat = r.location.coordinates[1]
+      const lng = r.location.coordinates[0]
+      const key = `${Math.floor(lng / grid)}:${Math.floor(lat / grid)}`
+      if (!buckets.has(key)) buckets.set(key, { items: [], latSum: 0, lngSum: 0 })
+      const b = buckets.get(key)
+      b.items.push(r)
+      b.latSum += lat
+      b.lngSum += lng
+    }
+    const clusters = []
+    for (const [, b] of buckets) {
+      if (b.items.length === 1) {
+        clusters.push({ type: 'single', report: b.items[0] })
+      } else {
+        clusters.push({ type: 'cluster', count: b.items.length, lat: b.latSum / b.items.length, lng: b.lngSum / b.items.length, items: b.items })
+      }
+    }
+    return clusters
   }
 
   return (
@@ -143,18 +194,33 @@ export default function App() {
               referrerPolicy="no-referrer"
             />
             <MapEventsBinder />
-            {reports.map((r) => (
-              <Marker key={r._id || r.id} position={[r.location.coordinates[1], r.location.coordinates[0]]}>
-                <Popup>
-                  <div className="text-sm">
-                    <div>Status: {r.status}</div>
-                    <div>Notes: {r.notes}</div>
-                    <div>By: {r.reporterId || 'anon'}</div>
-                    <button className="mt-2 px-2 py-1 border rounded text-xs" onClick={() => setSelected(r)}>Open</button>
-                  </div>
-                </Popup>
-              </Marker>
-            ))}
+            {getClusteredMarkers().map((item, idx) => {
+              if (item.type === 'single') {
+                const r = item.report
+                return (
+                  <Marker key={r._id || r.id} position={[r.location.coordinates[1], r.location.coordinates[0]]}>
+                    <Popup>
+                      <div className="text-sm">
+                        <div>Status: {r.status}</div>
+                        <div>Notes: {r.notes}</div>
+                        <div>By: {r.reporterId || 'anon'}</div>
+                        <button className="mt-2 px-2 py-1 border rounded text-xs" onClick={() => setSelected(r)}>Open</button>
+                      </div>
+                    </Popup>
+                  </Marker>
+                )
+              }
+              return (
+                <Marker key={`cluster-${idx}-${item.lat}-${item.lng}`} position={[item.lat, item.lng]}>
+                  <Popup>
+                    <div className="text-sm">
+                      <div>Cluster: {item.count} reports</div>
+                      <button className="mt-2 px-2 py-1 border rounded text-xs" onClick={() => setSelected(item.items[0])}>Open first</button>
+                    </div>
+                  </Popup>
+                </Marker>
+              )
+            })}
           </MapContainer>
         </div>
         <div className="p-4 space-y-3 lg:col-span-1 h-full">
@@ -173,14 +239,23 @@ export default function App() {
               <option value="rejected">Rejected</option>
             </select>
             <label className="inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={useBbox} onChange={async (e) => { const v = e.target.checked; setUseBbox(v); const next = v && bbox ? bbox : null; await fetchReports(1, statusFilter, next); }} /> Limit to map view</label>
+            <div className="text-xs text-gray-500">BBox: {useBbox && bbox ? bbox.map(n=>n.toFixed(4)).join(', ') : '—'}</div>
+            <button className="px-2 py-1 border rounded text-xs" onClick={() => fetchReports(1, statusFilter, bbox)}>Refresh</button>
           </div>
           <div className="space-y-2">
             <label className="block text-sm">Notes</label>
             <input className="border rounded w-full px-3 py-2 text-sm" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Describe the issue" />
-            <input className="border rounded w-full px-3 py-2 text-sm" type="file" accept="image/*" multiple onChange={(e) => setFile(e.target.files || null)} />
+            <input className="border rounded w-full px-3 py-2 text-sm" type="file" accept="image/*" multiple onChange={(e) => { const fl = e.target.files || null; setFile(fl); if (fl && fl.length) { const arr = Array.from(fl).slice(0,6).map(f => ({ name: f.name, url: URL.createObjectURL(f) })); setPreviews(arr) } else { setPreviews([]) } }} />
             <button className="px-4 py-2 bg-blue-600 text-white rounded" onClick={createReport}>Create Report at My Location</button>
             {file && file.length ? (
               <div className="text-xs text-gray-500">{file.length} image(s) selected</div>
+            ) : null}
+            {previews.length ? (
+              <div className="flex flex-wrap gap-2">
+                {previews.map((p) => (
+                  <img key={p.url} src={p.url} alt={p.name} className="w-16 h-16 object-cover rounded border" />
+                ))}
+              </div>
             ) : null}
           </div>
           <div className="grid grid-rows-2 gap-3 h-[calc(100%-4rem)]">
@@ -211,6 +286,9 @@ export default function App() {
                 window.open(url, '_blank')
               }}
             >Export CSV</button>
+          </div>
+          <div className="pt-2">
+            <AdminRoles auth={auth} />
           </div>
         </div>
       </main>
