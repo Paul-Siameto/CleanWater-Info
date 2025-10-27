@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import axios from 'axios';
 import admin from 'firebase-admin';
+import Report from './models/Report.js';
+import Comment from './models/Comment.js';
 
 dotenv.config();
 
@@ -32,9 +34,10 @@ if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && proc
 // MongoDB connection (optional during first run)
 const mongoUri = process.env.MONGO_URI;
 if (mongoUri) {
+  const dbName = process.env.MONGO_DB_NAME || 'cleanwater-db';
   mongoose
-    .connect(mongoUri)
-    .then(() => console.log('MongoDB connected'))
+    .connect(mongoUri, { dbName })
+    .then(() => console.log(`MongoDB connected (db=${dbName})`))
     .catch((err) => console.error('MongoDB connection error', err.message));
 }
 
@@ -60,29 +63,86 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
 
-// Minimal in-memory reports for MVP scaffold
-const reports = [];
-
-app.get('/api/reports', (req, res) => {
-  res.json({ items: reports });
+// Reports - MongoDB backed
+app.get('/api/reports', async (req, res) => {
+  try {
+    const { limit = 100, status, fromDate, toDate, bbox } = req.query;
+    const q = {};
+    if (status) q.status = status;
+    if (fromDate || toDate) {
+      q.createdAt = {};
+      if (fromDate) q.createdAt.$gte = new Date(fromDate);
+      if (toDate) q.createdAt.$lte = new Date(toDate);
+    }
+    if (bbox) {
+      const parts = String(bbox).split(',').map(Number);
+      if (parts.length === 4 && parts.every((n) => !Number.isNaN(n))) {
+        const [minLng, minLat, maxLng, maxLat] = parts;
+        q['location'] = {
+          $geoWithin: {
+            $box: [ [minLng, minLat], [maxLng, maxLat] ],
+          },
+        };
+      }
+    }
+    const items = await Report.find(q).sort({ createdAt: -1 }).limit(Number(limit));
+    res.json({ items });
+  } catch (e) {
+    res.status(500).json({ error: 'reports_list_failed' });
+  }
 });
 
-app.post('/api/reports', (req, res) => {
-  const { lat, lng, notes, photos = [] } = req.body || {};
-  if (typeof lat !== 'number' || typeof lng !== 'number') {
-    return res.status(400).json({ error: 'lat and lng are required numbers' });
+app.post('/api/reports', async (req, res) => {
+  try {
+    const { lat, lng, notes, photos = [] } = req.body || {};
+    if (typeof lat !== 'number' || typeof lng !== 'number') {
+      return res.status(400).json({ error: 'lat and lng are required numbers' });
+    }
+    const doc = await Report.create({
+      reporterId: req.user?.uid || null,
+      location: { type: 'Point', coordinates: [lng, lat] },
+      notes: notes || '',
+      photos,
+      status: 'pending',
+    });
+    res.status(201).json(doc);
+  } catch (e) {
+    res.status(500).json({ error: 'report_create_failed' });
   }
-  const item = {
-    id: String(Date.now()),
-    location: { type: 'Point', coordinates: [lng, lat] },
-    notes: notes || '',
-    photos,
-    status: 'pending',
-    createdAt: new Date().toISOString(),
-    reporterId: req.user?.uid || null,
-  };
-  reports.push(item);
-  res.status(201).json(item);
+});
+
+app.get('/api/reports/:id', async (req, res) => {
+  try {
+    const doc = await Report.findById(req.params.id);
+    if (!doc) return res.status(404).json({ error: 'not_found' });
+    res.json(doc);
+  } catch (e) {
+    res.status(400).json({ error: 'invalid_id' });
+  }
+});
+
+app.post('/api/reports/:id/comments', async (req, res) => {
+  try {
+    const { content } = req.body || {};
+    if (!content || !content.trim()) return res.status(400).json({ error: 'content_required' });
+    const report = await Report.findById(req.params.id);
+    if (!report) return res.status(404).json({ error: 'report_not_found' });
+    const c = await Comment.create({ reportId: report._id, authorId: req.user?.uid || null, content });
+    res.status(201).json(c);
+  } catch (e) {
+    res.status(500).json({ error: 'comment_create_failed' });
+  }
+});
+
+app.get('/api/reports/:id/comments', async (req, res) => {
+  try {
+    const report = await Report.findById(req.params.id);
+    if (!report) return res.status(404).json({ error: 'report_not_found' });
+    const items = await Comment.find({ reportId: report._id }).sort({ createdAt: 1 });
+    res.json({ items });
+  } catch (e) {
+    res.status(500).json({ error: 'comments_list_failed' });
+  }
 });
 
 // Weather proxy (OpenWeather) - optional during first run

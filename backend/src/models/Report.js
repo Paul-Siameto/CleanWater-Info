@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 
 const pointSchema = new mongoose.Schema({
   type: { type: String, enum: ['Point'], required: true, default: 'Point' },
-  coordinates: { type: [Number], required: true, index: '2dsphere' },
+  coordinates: { type: [Number], required: true },
 }, { _id: false });
 
 const reportSchema = new mongoose.Schema({
@@ -17,5 +17,7 @@ const reportSchema = new mongoose.Schema({
   weatherSnapshot: { type: Object, default: null },
   duplicates: { type: [mongoose.Schema.Types.ObjectId], ref: 'Report', default: [] },
 }, { timestamps: true });
+
+reportSchema.index({ location: '2dsphere' });
 
 export default mongoose.models.Report || mongoose.model('Report', reportSchema);
