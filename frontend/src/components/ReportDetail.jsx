@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import api from '../lib/api'
+import Lightbox from './Lightbox'
 
 export default function ReportDetail({ report, auth }) {
   const [comments, setComments] = useState([])
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
+  const [lightboxOpen, setLightboxOpen] = useState(false)
+  const [lightboxIndex, setLightboxIndex] = useState(0)
   const reportId = report?._id || report?.id
 
   useEffect(() => {
@@ -68,13 +71,14 @@ export default function ReportDetail({ report, auth }) {
         <div className="text-xs text-gray-500">ID: {reportId}</div>
         {Array.isArray(report.photos) && report.photos.length > 0 ? (
           <div className="mt-2 flex flex-wrap gap-2">
-            {report.photos.map((pid) => {
+            {report.photos.map((pid, idx) => {
               const cloud = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
               const url = cloud ? `https://res.cloudinary.com/${cloud}/image/upload/c_fill,w_120,h_120/${pid}.jpg` : null
+              const full = cloud ? `https://res.cloudinary.com/${cloud}/image/upload/f_auto,q_auto,w_1200/${pid}.jpg` : null
               return (
                 <div key={pid} className="text-xs">
                   {url ? (
-                    <img src={url} alt={pid} className="w-16 h-16 object-cover rounded border" />
+                    <img onClick={() => { setLightboxIndex(idx); setLightboxOpen(true) }} src={url} alt={pid} className="w-16 h-16 object-cover rounded border cursor-pointer hover:opacity-90" />
                   ) : (
                     <div className="border rounded px-2 py-1">{pid}</div>
                   )}
@@ -120,6 +124,17 @@ export default function ReportDetail({ report, auth }) {
           <button className="px-3 py-2 bg-blue-600 text-white rounded text-sm" type="submit">Post</button>
         </form>
       </div>
+      {lightboxOpen ? (
+        <Lightbox
+          open={lightboxOpen}
+          index={lightboxIndex}
+          onClose={() => setLightboxOpen(false)}
+          images={(Array.isArray(report.photos) ? report.photos : []).map((pid) => {
+            const cloud = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
+            return cloud ? `https://res.cloudinary.com/${cloud}/image/upload/f_auto,q_auto,w_1600/${pid}.jpg` : ''
+          })}
+        />
+      ) : null}
     </div>
   )
 }

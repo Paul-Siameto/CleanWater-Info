@@ -10,6 +10,7 @@ import ReportDetail from './components/ReportDetail'
 import { getUploadSignature, uploadImageToCloudinary } from './lib/cloudinary'
 import { queueReport, flushQueuedReports } from './lib/offline'
 import AdminRoles from './components/AdminRoles'
+import AnalyticsSummary from './components/AnalyticsSummary'
 
 const firebaseApp = initializeApp(getFirebaseConfig())
 const auth = getAuth(firebaseApp)
@@ -169,14 +170,14 @@ export default function App() {
 
   return (
     <div className="h-full flex flex-col">
-      <header className="p-3 border-b flex items-center justify-between">
-        <div className="font-semibold">CleanWater-Info</div>
-        <div className="flex items-center gap-2">
+      <header className="px-4 py-3 border-b flex items-center justify-between bg-white/60 backdrop-blur sticky top-0 z-10">
+        <div className="font-semibold text-lg">CleanWater-Info</div>
+        <div className="flex items-center gap-3">
           {user ? (
             <>
               <img src={user.photoURL} alt="avatar" className="w-8 h-8 rounded-full" />
-              <span className="text-sm">{user.displayName}</span>
-              <button className="px-3 py-1 border rounded" onClick={handleSignOut}>Sign out</button>
+              <span className="text-sm text-gray-700">{user.displayName}</span>
+              <button className="px-3 py-1 border rounded hover:bg-gray-50" onClick={handleSignOut}>Sign out</button>
             </>
           ) : (
             <button className="px-3 py-1 border rounded" onClick={handleSignIn}>Sign in</button>
@@ -223,9 +224,12 @@ export default function App() {
             })}
           </MapContainer>
         </div>
-        <div className="p-4 space-y-3 lg:col-span-1 h-full">
-          <h2 className="font-semibold">Reports</h2>
-          <div className="space-y-2">
+        <div className="p-4 space-y-4 lg:col-span-1 h-full bg-gray-50">
+          <div className="rounded-xl border bg-white/70 backdrop-blur p-3 shadow-sm">
+            <h2 className="font-semibold">Reports</h2>
+            <div className="text-xs text-gray-500">Filter and export</div>
+          </div>
+          <div className="space-y-2 rounded-xl border bg-white/70 backdrop-blur p-3 shadow-sm">
             <label className="block text-sm">Status Filter</label>
             <select
               className="border rounded px-2 py-1 text-sm"
@@ -239,10 +243,12 @@ export default function App() {
               <option value="rejected">Rejected</option>
             </select>
             <label className="inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={useBbox} onChange={async (e) => { const v = e.target.checked; setUseBbox(v); const next = v && bbox ? bbox : null; await fetchReports(1, statusFilter, next); }} /> Limit to map view</label>
+            <label className="mt-1 inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={useCluster} onChange={(e) => setUseCluster(e.target.checked)} /> Cluster markers</label>
             <div className="text-xs text-gray-500">BBox: {useBbox && bbox ? bbox.map(n=>n.toFixed(4)).join(', ') : '—'}</div>
             <button className="px-2 py-1 border rounded text-xs" onClick={() => fetchReports(1, statusFilter, bbox)}>Refresh</button>
           </div>
-          <div className="space-y-2">
+          <AnalyticsSummary status={statusFilter} bbox={useBbox ? bbox : null} />
+          <div className="space-y-2 rounded-xl border bg-white/70 backdrop-blur p-3 shadow-sm">
             <label className="block text-sm">Notes</label>
             <input className="border rounded w-full px-3 py-2 text-sm" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Describe the issue" />
             <input className="border rounded w-full px-3 py-2 text-sm" type="file" accept="image/*" multiple onChange={(e) => { const fl = e.target.files || null; setFile(fl); if (fl && fl.length) { const arr = Array.from(fl).slice(0,6).map(f => ({ name: f.name, url: URL.createObjectURL(f) })); setPreviews(arr) } else { setPreviews([]) } }} />
