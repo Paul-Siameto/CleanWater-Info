@@ -16,6 +16,9 @@ const reportSchema = new mongoose.Schema({
   aiLabel: { type: String, default: null },
   aiTop: { type: [Object], default: [] },
   weatherSnapshot: { type: Object, default: null },
+  assignee: { type: String, default: null },
+  resolutionNotes: { type: String, default: '' },
+  activities: { type: [Object], default: [] },
   duplicates: { type: [mongoose.Schema.Types.ObjectId], ref: 'Report', default: [] },
 }, { timestamps: true });
 

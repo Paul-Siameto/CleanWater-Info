@@ -28,6 +28,112 @@ if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && proc
         }),
       });
 
+// KPIs endpoint (same as summary but structured counts only)
+app.get('/api/analytics/kpis', async (req, res) => {
+  try {
+    const { fromDate, toDate, bbox } = req.query;
+    const q = {};
+    if (fromDate || toDate) {
+      q.createdAt = {};
+      if (fromDate) q.createdAt.$gte = new Date(fromDate);
+      if (toDate) q.createdAt.$lte = new Date(toDate);
+    }
+    if (bbox) {
+      const parts = String(bbox).split(',').map(Number);
+      if (parts.length === 4 && parts.every((n) => !Number.isNaN(n))) {
+        const [minLng, minLat, maxLng, maxLat] = parts;
+        q['location'] = { $geoWithin: { $box: [[minLng, minLat],[maxLng, maxLat]] } };
+      }
+    }
+    const [total, pending, verified, flagged, rejected] = await Promise.all([
+      Report.countDocuments(q),
+      Report.countDocuments({ ...q, status: 'pending' }),
+      Report.countDocuments({ ...q, status: 'verified' }),
+      Report.countDocuments({ ...q, status: 'flagged' }),
+      Report.countDocuments({ ...q, status: 'rejected' }),
+    ]);
+    res.json({ total, pending, verified, flagged, rejected });
+  } catch (e) {
+    res.status(500).json({ error: 'kpis_failed' });
+  }
+});
+
+// Hotspots: aggregate counts into a grid
+app.get('/api/analytics/hotspots', async (req, res) => {
+  try {
+    const { bbox, cell = 0.1 } = req.query;
+    const q = {};
+    if (bbox) {
+      const parts = String(bbox).split(',').map(Number);
+      if (parts.length === 4 && parts.every((n) => !Number.isNaN(n))) {
+        const [minLng, minLat, maxLng, maxLat] = parts;
+        q['location'] = { $geoWithin: { $box: [[minLng, minLat],[maxLng, maxLat]] } };
+      }
+    }
+    const items = await Report.find(q).select('location');
+    const size = Math.max(0.01, Math.min(1, Number(cell)));
+    const grid = new Map();
+    for (const r of items) {
+      const lng = r.location.coordinates[0];
+      const lat = r.location.coordinates[1];
+      const key = `${Math.floor(lng / size)}:${Math.floor(lat / size)}`;
+      grid.set(key, (grid.get(key) || 0) + 1);
+    }
+    const cells = [];
+    for (const [key, count] of grid) {
+      const [gx, gy] = key.split(':').map(Number);
+      const center = { lng: (gx + 0.5) * size, lat: (gy + 0.5) * size };
+      cells.push({ count, center });
+    }
+    res.json({ cells, cell: size });
+  } catch (e) {
+    res.status(500).json({ error: 'hotspots_failed' });
+  }
+});
+
+// Simple potential duplicates: same day within ~200m
+app.get('/api/reports/duplicates', async (req, res) => {
+  try {
+    const meter = 1/111000; // deg ~ meters
+    const radius = 200 * meter;
+    const day = req.query.day ? new Date(req.query.day) : null;
+    const q = {};
+    if (day) {
+      const next = new Date(day); next.setDate(next.getDate() + 1);
+      q.createdAt = { $gte: day, $lt: next };
+    }
+    const items = await Report.find(q).select('location createdAt notes');
+    const groups = [];
+    const used = new Set();
+    for (let i=0;i<items.length;i++) {
+      if (used.has(items[i]._id.toString())) continue;
+      const cluster = [items[i]];
+      for (let j=i+1;j<items.length;j++) {
+        if (used.has(items[j]._id.toString())) continue;
+        const a = items[i].location.coordinates; const b = items[j].location.coordinates;
+        const d = Math.hypot(a[0]-b[0], a[1]-b[1]);
+        if (d < radius) { cluster.push(items[j]); used.add(items[j]._id.toString()); }
+      }
+      if (cluster.length > 1) groups.push(cluster.map(x => x._id));
+    }
+    res.json({ groups });
+  } catch (e) {
+    res.status(500).json({ error: 'duplicates_failed' });
+  }
+});
+
+// Admin: get current user's role
+app.get('/api/admin/me', authRequired, async (req, res) => {
+  try {
+    if (!req.user?.uid) return res.json({ role: 'citizen' });
+    const user = await User.findOne({ uid: req.user.uid });
+    if (!user) return res.json({ role: 'citizen', uid: req.user.uid });
+    res.json({ role: user.role, uid: user.uid, displayName: user.displayName, email: user.email });
+  } catch (e) {
+    res.json({ role: 'citizen' });
+  }
+});
+
 // Admin: upsert user role
 app.post('/api/admin/users/role', authRequired, async (req, res) => {
   try {
@@ -36,6 +142,13 @@ app.post('/api/admin/users/role', authRequired, async (req, res) => {
       const me = await User.findOne({ uid: req.user.uid });
       if (me && me.role === 'admin') isAdmin = true;
     }
+
+function pushActivity(doc, entry) {
+  try {
+    doc.activities = doc.activities || [];
+    doc.activities.push({ ...entry, at: new Date(), by: req?.user?.uid || 'system' });
+  } catch {}
+}
     const devBypass = !admin.apps.length || process.env.DEV_ALLOW_UNAUTH === 'true';
     if (!isAdmin && !devBypass) return res.status(403).json({ error: 'forbidden' });
     const { uid, role, displayName, email } = req.body || {};
@@ -194,11 +307,46 @@ app.patch('/api/reports/:id/status', authRequired, async (req, res) => {
     }
     const devBypass = !admin.apps.length || process.env.DEV_ALLOW_UNAUTH === 'true';
     if (!allowedRole && !devBypass) return res.status(403).json({ error: 'forbidden' });
-    const doc = await Report.findByIdAndUpdate(req.params.id, { status }, { new: true });
+    const doc = await Report.findById(req.params.id);
     if (!doc) return res.status(404).json({ error: 'not_found' });
+    doc.status = status;
+    try { doc.activities.push({ type: 'status', to: status, at: new Date(), by: req.user?.uid || null }); } catch {}
+    await doc.save();
     res.json(doc);
   } catch (e) {
     res.status(500).json({ error: 'status_update_failed' });
+  }
+});
+
+// Assign report to a user (string assignee id or email)
+app.patch('/api/reports/:id/assign', authRequired, async (req, res) => {
+  try {
+    const { assignee } = req.body || {};
+    if (!assignee || typeof assignee !== 'string') return res.status(400).json({ error: 'invalid_assignee' });
+    const doc = await Report.findById(req.params.id);
+    if (!doc) return res.status(404).json({ error: 'not_found' });
+    doc.assignee = assignee;
+    try { doc.activities.push({ type: 'assign', assignee, at: new Date(), by: req.user?.uid || null }); } catch {}
+    await doc.save();
+    res.json(doc);
+  } catch (e) {
+    res.status(500).json({ error: 'assign_failed' });
+  }
+});
+
+// Resolve report with notes (optionally set status)
+app.patch('/api/reports/:id/resolve', authRequired, async (req, res) => {
+  try {
+    const { resolutionNotes, status } = req.body || {};
+    const doc = await Report.findById(req.params.id);
+    if (!doc) return res.status(404).json({ error: 'not_found' });
+    if (typeof resolutionNotes === 'string') doc.resolutionNotes = resolutionNotes;
+    if (status && ['verified','rejected'].includes(status)) doc.status = status;
+    try { doc.activities.push({ type: 'resolve', status: doc.status, at: new Date(), by: req.user?.uid || null }); } catch {}
+    await doc.save();
+    res.json(doc);
+  } catch (e) {
+    res.status(500).json({ error: 'resolve_failed' });
   }
 });
 
@@ -419,6 +567,41 @@ app.get('/api/weather/current', async (req, res) => {
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: 'weather_failed' });
+  }
+});
+
+// Weather alerts (best-effort; if One Call 3.0 not available, return empty)
+app.get('/api/weather/alerts', async (req, res) => {
+  const { lat, lng } = req.query;
+  const apiKey = process.env.OPENWEATHER_API_KEY;
+  if (!apiKey) return res.json({ alerts: [] });
+  try {
+    // Try One Call 3.0 (alerts in response if available)
+    const url = `https://api.openweathermap.org/data/3.0/onecall?lat=${lat}&lon=${lng}&appid=${apiKey}&units=metric&exclude=minutely,hourly,daily`;
+    const { data } = await axios.get(url);
+    res.json({ alerts: data.alerts || [] });
+  } catch (e) {
+    res.json({ alerts: [] });
+  }
+});
+
+// Gemini Assistant: minimal ask endpoint
+app.post('/api/assistant/ask', async (req, res) => {
+  try {
+    const { question, context } = req.body || {};
+    if (!question || typeof question !== 'string') return res.status(400).json({ error: 'question_required' });
+    const geminiKey = process.env.GEMINI_API_KEY;
+    if (!geminiKey) return res.json({ provider: 'basic', answer: 'Gemini not configured. Please set GEMINI_API_KEY.' });
+    const prompt = `You are an assistant for a water quality NGO. Answer concisely. Question: ${question}\nContext: ${JSON.stringify(context || {})}`;
+    const { data } = await axios.post(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent',
+      { contents: [{ parts: [{ text: prompt }] }] },
+      { params: { key: geminiKey } }
+    );
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || 'No answer';
+    res.json({ provider: 'gemini', answer: text });
+  } catch (e) {
+    res.json({ provider: 'basic', answer: 'Assistant unavailable right now.' });
   }
 });
 
