@@ -13,7 +13,35 @@ import User from './models/User.js';
 dotenv.config();
 
 const app = express();
-app.use(cors());
+// CORS configuration - Only allow origins specified in ALLOWED_ORIGINS environment variable
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
+  : [];
+
+if (allowedOrigins.length === 0) {
+  console.warn('WARNING: No allowed origins specified in ALLOWED_ORIGINS. CORS will block all web requests.');
+}
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps, curl, etc.)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+      callback(null, true);
+    } else {
+      console.warn(`Blocked request from unauthorized origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  optionsSuccessStatus: 200 // Some legacy browsers choke on 204
+};
+
+app.use(cors(corsOptions));
+
+// Log allowed origins for debugging
+console.log('Allowed CORS origins:', allowedOrigins);
 app.use(express.json({ limit: '5mb' }));
 
 // Firebase Admin initialization (optional; requires env vars)
