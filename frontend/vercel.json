@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "https://cleanwater-info-backend.onrender.com"
+    }
+  ]
+}

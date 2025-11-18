@@ -529,7 +529,7 @@ function MapPage({ alerts, baseLayer, setBaseLayer, hasMapbox, position, showHot
                 params.set('limit', '1000')
                 if (statusFilter) params.set('status', statusFilter)
                 if (useBbox && bbox) params.set('bbox', bbox.join(','))
-                const url = `/api/reports.csv?${params.toString()}`
+                const url = `https://cleanwater-info-backend.onrender.com/reports.csv?${params.toString()}`
                 window.open(url, '_blank')
               }}
             >Export CSV</button>

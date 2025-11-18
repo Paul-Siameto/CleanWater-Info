@@ -13,13 +13,17 @@ import User from './models/User.js';
 dotenv.config();
 
 const app = express();
-// CORS configuration - Only allow origins specified in ALLOWED_ORIGINS environment variable
-const allowedOrigins = process.env.ALLOWED_ORIGINS 
-  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
-  : [];
+// CORS configuration - Production frontend URL
+const allowedOrigins = [
+  'https://clean-water-info.vercel.app',
+  ...(process.env.ALLOWED_ORIGINS 
+    ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
+    : [])
+];
 
-if (allowedOrigins.length === 0) {
-  console.warn('WARNING: No allowed origins specified in ALLOWED_ORIGINS. CORS will block all web requests.');
+// Also allow localhost for development
+if (process.env.NODE_ENV !== 'production') {
+  allowedOrigins.push('http://localhost:5173', 'http://localhost:3000');
 }
 
 const corsOptions = {
