@@ -39,8 +39,7 @@ function AppContent() {
   const [hotspots, setHotspots] = useState([])
   const [dark, setDark] = useState(false)
   const [baseLayer, setBaseLayer] = useState('osm') // 'osm' | 'sat' | 'terrain'
-  const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN
-  const hasMapbox = Boolean(MAPBOX_TOKEN)
+  const hasMapbox = false // Not using Mapbox anymore
   const [alerts, setAlerts] = useState([])
   const [viewMode, setViewMode] = useState('citizen') // 'citizen' or 'admin'
   const [userRole, setUserRole] = useState(null)
@@ -352,7 +351,7 @@ return (
 
     <main className="flex-1 overflow-y-auto">
       <Routes>
-        <Route path="/" element={<MapPage {...{ alerts, baseLayer, setBaseLayer, hasMapbox, MAPBOX_TOKEN, position, showHotspots, hotspots, getClusteredMarkers, reports, setSelected, bbox, setBbox, setZoomLevel, useBbox, setUseBbox, useCluster, setUseCluster, setShowHotspots, fetchHotspots, fetchReports, page, pages, notes, setNotes, file, previews, createReport, user, handleFileChange, handleImageRemove, statusFilter }} />} />
+        <Route path="/" element={<MapPage {...{ alerts, baseLayer, setBaseLayer, hasMapbox, position, showHotspots, hotspots, getClusteredMarkers, reports, selected, setSelected, bbox, setBbox, setZoomLevel, useBbox, setUseBbox, useCluster, setUseCluster, setShowHotspots, fetchHotspots, fetchReports, page, pages, notes, setNotes, file, previews, createReport, user, handleFileChange, handleImageRemove, statusFilter }} />} />
         <Route path="/reports" element={<ReportsPage {...{ reports, statusFilter, setStatusFilter, fetchReports, page, setPage, pages, selected, setSelected, auth }} />} />
         <Route path="/analytics" element={<AnalyticsPage {...{ bbox, statusFilter }} />} />
         {userRole && userRole !== 'citizen' && (
@@ -368,7 +367,7 @@ return (
 }
 
 // Map Page Component
-function MapPage({ alerts, baseLayer, setBaseLayer, hasMapbox, MAPBOX_TOKEN, position, showHotspots, hotspots, getClusteredMarkers, reports, setSelected, bbox, setBbox, setZoomLevel, useBbox, setUseBbox, useCluster, setUseCluster, setShowHotspots, fetchHotspots, fetchReports, page, pages, notes, setNotes, file, previews, createReport, user, handleFileChange, handleImageRemove, statusFilter }) {
+function MapPage({ alerts, baseLayer, setBaseLayer, hasMapbox, position, showHotspots, hotspots, getClusteredMarkers, reports, selected, setSelected, bbox, setBbox, setZoomLevel, useBbox, setUseBbox, useCluster, setUseCluster, setShowHotspots, fetchHotspots, fetchReports, page, pages, notes, setNotes, file, previews, createReport, user, handleFileChange, handleImageRemove, statusFilter }) {
   
   function MapEventsBinder() {
     useMapEvents({
@@ -400,31 +399,15 @@ function MapPage({ alerts, baseLayer, setBaseLayer, hasMapbox, MAPBOX_TOKEN, pos
               </ul>
             </div>
           ) : null}
-          <MapContainer center={[position.lat || 0, position.lng || 0]} zoom={13} style={{ height: '100%', width: '100%' }}>
-            {baseLayer === 'osm' && (
-              <TileLayer
-                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> contributors'
-                url="/tiles/{z}/{x}/{y}.png"
-                crossOrigin={true}
-                referrerPolicy="no-referrer"
-              />
-            )}
-            {hasMapbox && baseLayer === 'sat' && (
-              <TileLayer
-                attribution='Imagery © Mapbox'
-                url={`https://api.mapbox.com/styles/v1/mapbox/satellite-v9/tiles/{z}/{x}/{y}?access_token=${MAPBOX_TOKEN}`}
-                tileSize={512}
-                zoomOffset={-1}
-              />
-            )}
-            {hasMapbox && baseLayer === 'terrain' && (
-              <TileLayer
-                attribution='© Mapbox Terrain'
-                url={`https://api.mapbox.com/styles/v1/mapbox/outdoors-v12/tiles/{z}/{x}/{y}?access_token=${MAPBOX_TOKEN}`}
-                tileSize={512}
-                zoomOffset={-1}
-              />
-            )}
+          <MapContainer 
+            center={[position.lat || 0, position.lng || 0]} 
+            zoom={13} 
+            style={{ height: '100%', width: '100%' }}
+          >
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
             <MapEventsBinder />
             {showHotspots && hotspots.map((c, idx) => (
               <Marker key={`hot-${idx}`} position={[c.center.lat, c.center.lng]}>
@@ -444,6 +427,15 @@ function MapPage({ alerts, baseLayer, setBaseLayer, hasMapbox, MAPBOX_TOKEN, pos
                         <div>Notes: {r.notes}</div>
                         <div>By: {r.reporterId || 'anon'}</div>
                         <button className="mt-2 px-2 py-1 border rounded text-xs" onClick={() => setSelected(r)}>Open</button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            className="p-2 rounded-lg bg-blue-100 dark:bg-blue-800"
+                            title="OpenStreetMap"
+                            disabled
+                          >
+                            <MapPin className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     </Popup>
                   </Marker>
@@ -487,14 +479,9 @@ function MapPage({ alerts, baseLayer, setBaseLayer, hasMapbox, MAPBOX_TOKEN, pos
             <button className="px-2 py-1 border rounded text-xs" onClick={() => fetchReports(1, statusFilter, bbox)}>Refresh</button>
             <div className="pt-2">
               <label className="block text-sm">Base Map</label>
-              <select className="border rounded px-2 py-1 text-sm" value={baseLayer} onChange={(e)=>setBaseLayer(e.target.value)}>
-                <option value="osm">OSM</option>
-                {hasMapbox ? <option value="sat">Mapbox Satellite</option> : null}
-                {hasMapbox ? <option value="terrain">Mapbox Terrain</option> : null}
+              <select className="border rounded px-2 py-1 text-sm" value="osm" disabled>
+                <option value="osm">OpenStreetMap</option>
               </select>
-              {!hasMapbox ? (
-                <div className="text-[10px] text-gray-500 mt-1">Add VITE_MAPBOX_TOKEN in frontend/.env for Satellite/Terrain</div>
-              ) : null}
             </div>
           </div>
           <div className="rounded-xl border bg-white/70 backdrop-blur p-3 shadow-sm">
